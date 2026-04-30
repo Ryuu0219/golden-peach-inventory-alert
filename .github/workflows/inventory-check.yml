@@ -1,0 +1,38 @@
+name: Inventory Alert
+
+on:
+  schedule:
+    # 09:00 TST = 01:00 UTC
+    - cron: '0 1 * * *'
+    # 18:00 TST = 10:00 UTC
+    - cron: '0 10 * * *'
+  workflow_dispatch:  # 允許手動觸發測試
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Restore credentials from secrets
+        env:
+          GSPREAD_CREDENTIALS_JSON: ${{ secrets.GSPREAD_CREDENTIALS_JSON }}
+          GSPREAD_AUTHORIZED_USER_JSON: ${{ secrets.GSPREAD_AUTHORIZED_USER_JSON }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: |
+          mkdir -p ~/.gspread ~/.line
+          printf '%s' "$GSPREAD_CREDENTIALS_JSON" > ~/.gspread/credentials.json
+          printf '%s' "$GSPREAD_AUTHORIZED_USER_JSON" > ~/.gspread/authorized_user.json
+          printf 'LINE_CHANNEL_ACCESS_TOKEN=%s\n' "$LINE_CHANNEL_ACCESS_TOKEN" > ~/.line/golden-peach-oa.env
+          chmod 600 ~/.gspread/* ~/.line/*
+
+      - name: Run inventory check + push
+        run: python check_inventory.py --push
