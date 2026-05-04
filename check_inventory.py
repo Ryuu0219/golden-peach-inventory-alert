@@ -6,6 +6,8 @@ import requests
 
 # ============ 設定 ============
 SHEET_ID = "1E4-UyhlZfwxyiZSlPCKlM2GM5RGpb5fmIkTN3mMppzU"
+WHITELIST_SHEET_ID = "1cpUoBELuzICPeUjQKyRhyCTRHW0lroq8J6z6fWvZMME"  # 員工 LINE 白名單（單一真相源）
+SUBSCRIPTION_CATEGORY = "庫存"  # 此推播屬於「庫存」類別
 
 # 各類別目標庫存天數（= 到貨 + 安全 + 訂貨週期）
 TARGET_DAYS = {
@@ -24,14 +26,32 @@ TARGET_DAYS = {
 }
 DEFAULT_TARGET = 30
 
-LINE_USER_IDS = [
-    ("老闆 Ryuu", "U13190a2b8de52716f397dbf8e7a2dca1"),
-    ("老闆娘", "U81f9ddd96c54d811cb00b6d79d183eca"),
-    ("內場主管 黃雅婷", "U8d869e65a2fbde9db3cbec5cdb0fe296"),
-    ("會計主管 莊佩玲", "U5b905931f3e46b82c2c2b50f6112f614"),
-    ("行政主管 陳韻涵", "U14cdaa7663ea7122f9651bf2a927d362"),
-    ("行政主管 陳紀如", "U2c9beccc4468119bb7d3a627d62a47cb"),
-]
+
+def get_inventory_subscribers(g):
+    """從白名單 Sheet 讀「訂閱類別」含『庫存』或『全部』的主管。"""
+    ss = g.open_by_key(WHITELIST_SHEET_ID)
+    ws = ss.worksheet('白名單')
+    rows = ws.get_all_values()
+    if len(rows) < 2:
+        return []
+    header = rows[0]
+    idx_uid = header.index('userId')
+    idx_role = header.index('角色類型')
+    idx_name = header.index('姓名')
+    idx_active = header.index('啟用')
+    idx_sub = header.index('訂閱類別')
+    out = []
+    for r in rows[1:]:
+        if len(r) <= idx_sub:
+            continue
+        if r[idx_active].upper() != 'TRUE':
+            continue
+        if r[idx_role] == '店員':
+            continue
+        subs = [s.strip() for s in r[idx_sub].split(',') if s.strip()]
+        if SUBSCRIPTION_CATEGORY in subs or '全部' in subs:
+            out.append((r[idx_name], r[idx_uid]))
+    return out
 
 
 def gc():
@@ -242,7 +262,7 @@ def format_flex(items_with_suggestions, now):
     return flex
 
 
-def push_to_line(flex_msg):
+def push_to_line(flex_msg, subscribers):
     env_path = os.path.expanduser('~/.line/golden-peach-oa.env')
     token = None
     with open(env_path) as f:
@@ -253,7 +273,7 @@ def push_to_line(flex_msg):
     if not token:
         raise RuntimeError('No LINE token')
 
-    user_ids = [u[1] for u in LINE_USER_IDS]
+    user_ids = [u[1] for u in subscribers]
     resp = requests.post(
         'https://api.line.me/v2/bot/message/multicast',
         json={'to': user_ids, 'messages': [flex_msg]},
@@ -271,6 +291,8 @@ def main(dry_run=True):
     items_with_suggestions = [(i, compute_suggestion(i, ss)) for i in targets]
     flex_msg = format_flex(items_with_suggestions, datetime.now())
 
+    subscribers = get_inventory_subscribers(g)
+
     red_n = sum(1 for x in items_with_suggestions if '🔴' in x[0]['status'] or x[0]['stock'] == 0)
     yellow_n = len(items_with_suggestions) - red_n
 
@@ -279,11 +301,14 @@ def main(dry_run=True):
     print("=" * 60)
     print(json.dumps(flex_msg, ensure_ascii=False, indent=2)[:1000] + '...')
     print("=" * 60)
-    print(f"推播對象：{[u[0] for u in LINE_USER_IDS]}")
+    print(f"推播對象（{len(subscribers)} 人）：{[u[0] for u in subscribers]}")
 
     if not dry_run:
+        if not subscribers:
+            print("\n⚠️ 沒有訂閱者，跳過推播")
+            return
         print("\n→ 實際推播中...")
-        status, resp = push_to_line(flex_msg)
+        status, resp = push_to_line(flex_msg, subscribers)
         print(f"LINE API 回應：{status} {resp}")
     else:
         print("\n(DRY RUN — 未實際推播；加 --push 才會推)")
