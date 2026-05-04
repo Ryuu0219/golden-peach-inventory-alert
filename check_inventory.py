@@ -27,6 +27,10 @@ DEFAULT_TARGET = 30
 LINE_USER_IDS = [
     ("老闆 Ryuu", "U13190a2b8de52716f397dbf8e7a2dca1"),
     ("老闆娘", "U81f9ddd96c54d811cb00b6d79d183eca"),
+    ("內場主管 黃雅婷", "U8d869e65a2fbde9db3cbec5cdb0fe296"),
+    ("會計主管 莊佩玲", "U5b905931f3e46b82c2c2b50f6112f614"),
+    ("行政主管 陳韻涵", "U14cdaa7663ea7122f9651bf2a927d362"),
+    ("行政主管 陳紀如", "U2c9beccc4468119bb7d3a627d62a47cb"),
 ]
 
 
@@ -142,48 +146,103 @@ def compute_suggestion(item, ss):
     }
 
 
-def format_message(items_with_suggestions, now):
+def fmt_num(n, suffix=''):
+    """整數無小數，浮點保留 1 位"""
+    if isinstance(n, float) and n != int(n):
+        s = f"{n:.1f}"
+    else:
+        s = f"{int(n)}"
+    return s + suffix
+
+
+def build_alert_row(item, s, level):
+    """單一品項一列：品名 / 剩餘 / 可用天數 / 建議補貨"""
+    days = f"{item['days_left']:.1f}天" if item['days_left'] is not None else '—'
+    if item['stock'] == 0:
+        days = '0天'
+    suggest_str = fmt_num(s['suggest']) if s['suggest'] > 0 else '—'
+    color = '#d4625e' if level == 'red' else '#e8a13a'
+    return {
+        "type": "box", "layout": "horizontal", "paddingAll": "6px",
+        "contents": [
+            {"type": "text", "text": item['name'], "size": "sm", "flex": 5, "wrap": True, "color": "#1a1a1a"},
+            {"type": "text", "text": fmt_num(item['stock']) + ' ' + item['unit'],
+             "size": "xs", "flex": 3, "align": "end", "color": color},
+            {"type": "text", "text": days, "size": "xs", "flex": 2, "align": "end", "color": "#888888"},
+            {"type": "text", "text": suggest_str, "size": "xs", "flex": 2, "align": "end",
+             "weight": "bold", "color": color},
+        ]
+    }
+
+
+def build_section(title, color, items_list):
+    """整段：標題 + 表頭 + 多列"""
+    contents = [
+        {"type": "text", "text": f"{title}（{len(items_list)} 項）",
+         "weight": "bold", "size": "md", "color": color},
+        {"type": "box", "layout": "horizontal",
+         "backgroundColor": "#f5f5f5", "paddingAll": "6px", "cornerRadius": "4px",
+         "contents": [
+             {"type": "text", "text": "品項", "size": "xs", "color": "#888888", "flex": 5},
+             {"type": "text", "text": "剩餘", "size": "xs", "color": "#888888", "flex": 3, "align": "end"},
+             {"type": "text", "text": "可用", "size": "xs", "color": "#888888", "flex": 2, "align": "end"},
+             {"type": "text", "text": "建議補", "size": "xs", "color": "#888888", "flex": 2, "align": "end"},
+         ]},
+    ]
+    level = 'red' if '警示' in title else 'yellow'
+    for item, s in items_list:
+        contents.append(build_alert_row(item, s, level))
+    return {"type": "box", "layout": "vertical", "spacing": "xs", "contents": contents}
+
+
+def format_flex(items_with_suggestions, now):
     red = [x for x in items_with_suggestions if '🔴' in x[0]['status'] or x[0]['stock'] == 0]
     yellow = [x for x in items_with_suggestions if '🟡' in x[0]['status'] and x not in red]
 
-    lines = [f"🍑 金桃家庫存通知 {now.strftime('%m/%d %H:%M')}", ""]
-
+    body_contents = []
     if red:
-        lines.append(f"🔴 警示（{len(red)} 項）")
-        for item, s in red:
-            lines.append("")
-            lines.append(f"🔴 {item['name']}")
-            if item['stock'] == 0:
-                lines.append(f"  ⚠️ 已斷貨｜近期出貨 {s['daily']:.1f}/天")
-            else:
-                days = f"{item['days_left']:.1f} 天" if item['days_left'] is not None else "—"
-                lines.append(f"  剩 {item['stock']:g} {item['unit']}｜可用 {days}｜10日均 {s['daily']:.1f}/天")
-            if s['suggest'] > 0:
-                lines.append(f"  → 建議補 {s['suggest']:g} {item['unit']}（{s['reason']}）")
-            else:
-                lines.append(f"  → 已超過目標庫存，先不用補")
-
+        body_contents.append(build_section("🔴 警示", "#d4625e", red))
     if yellow:
-        if red:
-            lines.append("")
-        lines.append(f"🟡 注意（{len(yellow)} 項）")
-        for item, s in yellow:
-            days = f"{item['days_left']:.1f} 天" if item['days_left'] is not None else "—"
-            lines.append("")
-            lines.append(f"🟡 {item['name']}")
-            lines.append(f"  剩 {item['stock']:g} {item['unit']}｜可用 {days}｜10日均 {s['daily']:.1f}/天")
-            if s['suggest'] > 0:
-                lines.append(f"  → 建議補 {s['suggest']:g} {item['unit']}")
-
+        body_contents.append(build_section("🟡 注意", "#e8a13a", yellow))
     if not red and not yellow:
-        lines.append("✅ 全部品項庫存充足，無需補貨")
+        body_contents.append({
+            "type": "text", "text": "✅ 全部品項庫存充足", "size": "md",
+            "color": "#5fa857", "align": "center", "weight": "bold",
+        })
 
-    lines.append("")
-    lines.append(f"📊 詳情：https://docs.google.com/spreadsheets/d/{SHEET_ID}")
-    return "\n".join(lines)
+    flex = {
+        "type": "flex",
+        "altText": f"金桃家原料庫存 {now.strftime('%m/%d %H:%M')} - 警示{len(red)} 注意{len(yellow)}",
+        "contents": {
+            "type": "bubble", "size": "giga",
+            "header": {
+                "type": "box", "layout": "vertical", "paddingAll": "16px",
+                "backgroundColor": "#fdf3f1",
+                "contents": [
+                    {"type": "text", "text": "🍑 金桃家原料庫存",
+                     "weight": "bold", "size": "lg", "color": "#1a1a1a"},
+                    {"type": "text", "text": now.strftime('%m/%d %H:%M'),
+                     "size": "xs", "color": "#888888", "margin": "sm"},
+                ],
+            },
+            "body": {
+                "type": "box", "layout": "vertical", "paddingAll": "16px", "spacing": "lg",
+                "contents": body_contents,
+            },
+            "footer": {
+                "type": "box", "layout": "vertical", "paddingAll": "12px",
+                "contents": [
+                    {"type": "text",
+                     "text": "剩餘=現庫存 ・可用=預估天數 ・建議補=達目標庫存所需",
+                     "size": "xxs", "color": "#aaaaaa", "wrap": True, "align": "center"},
+                ],
+            },
+        },
+    }
+    return flex
 
 
-def push_to_line(message):
+def push_to_line(flex_msg):
     env_path = os.path.expanduser('~/.line/golden-peach-oa.env')
     token = None
     with open(env_path) as f:
@@ -197,7 +256,7 @@ def push_to_line(message):
     user_ids = [u[1] for u in LINE_USER_IDS]
     resp = requests.post(
         'https://api.line.me/v2/bot/message/multicast',
-        json={'to': user_ids, 'messages': [{'type': 'text', 'text': message}]},
+        json={'to': user_ids, 'messages': [flex_msg]},
         headers={'Authorization': f'Bearer {token}'},
         timeout=10
     )
@@ -210,18 +269,21 @@ def main(dry_run=True):
     items = parse_inventory(ss)
     targets = [i for i in items if '🔴' in i['status'] or '🟡' in i['status']]
     items_with_suggestions = [(i, compute_suggestion(i, ss)) for i in targets]
-    msg = format_message(items_with_suggestions, datetime.now())
+    flex_msg = format_flex(items_with_suggestions, datetime.now())
+
+    red_n = sum(1 for x in items_with_suggestions if '🔴' in x[0]['status'] or x[0]['stock'] == 0)
+    yellow_n = len(items_with_suggestions) - red_n
 
     print("=" * 60)
-    print(f"訊息預覽（{len(msg)} 字）")
+    print(f"Flex 訊息：警示 {red_n} 項、注意 {yellow_n} 項")
     print("=" * 60)
-    print(msg)
+    print(json.dumps(flex_msg, ensure_ascii=False, indent=2)[:1000] + '...')
     print("=" * 60)
     print(f"推播對象：{[u[0] for u in LINE_USER_IDS]}")
 
     if not dry_run:
         print("\n→ 實際推播中...")
-        status, resp = push_to_line(msg)
+        status, resp = push_to_line(flex_msg)
         print(f"LINE API 回應：{status} {resp}")
     else:
         print("\n(DRY RUN — 未實際推播；加 --push 才會推)")
