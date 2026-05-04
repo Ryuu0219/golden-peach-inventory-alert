@@ -161,7 +161,7 @@ def build_alert_row(item, s, level):
     if item['stock'] == 0:
         days = '0天'
     suggest_str = fmt_num(s['suggest']) if s['suggest'] > 0 else '—'
-    color = '#d4625e' if level == 'red' else '#e8a13a'
+    color = '#a8332f' if level == 'red' else '#c47e1c'
     return {
         "type": "box", "layout": "horizontal", "paddingAll": "6px",
         "contents": [
@@ -201,13 +201,13 @@ def format_flex(items_with_suggestions, now):
 
     body_contents = []
     if red:
-        body_contents.append(build_section("🔴 警示", "#d4625e", red))
+        body_contents.append(build_section("🔴 警示", "#a8332f", red))
     if yellow:
-        body_contents.append(build_section("🟡 注意", "#e8a13a", yellow))
+        body_contents.append(build_section("🟡 注意", "#c47e1c", yellow))
     if not red and not yellow:
         body_contents.append({
             "type": "text", "text": "✅ 全部品項庫存充足", "size": "md",
-            "color": "#5fa857", "align": "center", "weight": "bold",
+            "color": "#2e7d32", "align": "center", "weight": "bold",
         })
 
     flex = {
