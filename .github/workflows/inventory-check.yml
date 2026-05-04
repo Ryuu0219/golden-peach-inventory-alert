@@ -1,8 +1,13 @@
 name: Inventory Alert
 
 on:
-  # 主管道改回本機 launchd（GitHub Actions 排程延遲嚴重，2026-05-05 改）
-  # 這裡只留手動觸發，當本機電腦關機或 launchd 失效時，從 web UI 手動 Run workflow
+  # 雙保險設計（2026-05-05）：
+  # - 本機 launchd 主管道（準時 09:00 / 18:00）
+  # - GH Actions 自動備援：09:30 / 18:30 跑（讓 launchd 先跑），若 Sheet 已有當班 log 就 skip
+  # - 電腦關機那天 launchd 沒跑 → GH Actions 看不到 log → 自動補推
+  schedule:
+    - cron: '30 1 * * *'   # 09:30 TST = 01:30 UTC
+    - cron: '30 10 * * *'  # 18:30 TST = 10:30 UTC
   workflow_dispatch:
 
 jobs:
@@ -32,4 +37,6 @@ jobs:
           chmod 600 ~/.gspread/* ~/.line/*
 
       - name: Run inventory check + push
+        env:
+          PUSH_SOURCE: gh-actions
         run: python check_inventory.py --push

@@ -1,8 +1,11 @@
 """金桃家庫存水位推播檢查"""
 import os, sys, json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import gspread
 import requests
+
+TW = timezone(timedelta(hours=8))
+PUSH_LOG_SHEET = '推播紀錄'  # dedup lock，兩個 system（launchd/gh actions）共用
 
 # ============ 設定 ============
 SHEET_ID = "1E4-UyhlZfwxyiZSlPCKlM2GM5RGpb5fmIkTN3mMppzU"
@@ -308,9 +311,50 @@ def push_to_line(flex_msg, subscribers):
     return resp.status_code, resp.text
 
 
+def current_slot():
+    """以台灣時間判斷現在屬於 morning（< 12:00）或 afternoon（>= 12:00）。"""
+    return 'morning' if datetime.now(TW).hour < 12 else 'afternoon'
+
+
+def already_pushed(ss, slot):
+    """今天該時段是否已推過（跨 launchd/gh actions 共用的鎖）。"""
+    today = datetime.now(TW).strftime('%Y-%m-%d')
+    try:
+        ws = ss.worksheet(PUSH_LOG_SHEET)
+    except gspread.WorksheetNotFound:
+        return False
+    for r in ws.get_all_values()[1:]:
+        if len(r) >= 2 and r[0] == today and r[1] == slot:
+            return True
+    return False
+
+
+def log_push(ss, slot, source, status):
+    """寫一筆推播紀錄。先寫再推，避免 race condition 雙推。"""
+    try:
+        ws = ss.worksheet(PUSH_LOG_SHEET)
+    except gspread.WorksheetNotFound:
+        ws = ss.add_worksheet(title=PUSH_LOG_SHEET, rows=2000, cols=5)
+        ws.append_row(['日期', '時段', '來源', '時間戳', '狀態'])
+    ws.append_row([
+        datetime.now(TW).strftime('%Y-%m-%d'),
+        slot,
+        source,
+        datetime.now(TW).strftime('%Y-%m-%d %H:%M:%S'),
+        status,
+    ])
+
+
 def main(dry_run=True):
     g = gc()
     ss = g.open_by_key(SHEET_ID)
+    source = os.environ.get('PUSH_SOURCE', 'launchd' if not dry_run else 'manual')
+    slot = current_slot()
+
+    if not dry_run and already_pushed(ss, slot):
+        print(f"[skip] 今天 {slot} 已由其他來源推過，跳過避免重複")
+        return
+
     items = parse_inventory(ss)
     targets = [i for i in items if '🔴' in i['status'] or '🟡' in i['status']]
     items_with_suggestions = [(i, compute_suggestion(i, ss)) for i in targets]
@@ -322,7 +366,7 @@ def main(dry_run=True):
     yellow_n = len(items_with_suggestions) - red_n
 
     print("=" * 60)
-    print(f"Flex 訊息：警示 {red_n} 項、注意 {yellow_n} 項")
+    print(f"Flex 訊息：警示 {red_n} 項、注意 {yellow_n} 項 / slot={slot} source={source}")
     print("=" * 60)
     print(json.dumps(flex_msg, ensure_ascii=False, indent=2)[:1000] + '...')
     print("=" * 60)
@@ -332,9 +376,12 @@ def main(dry_run=True):
         if not subscribers:
             print("\n⚠️ 沒有訂閱者，跳過推播")
             return
+        # 先寫 log（搶鎖）再推播；萬一 race，後手讀到 log 會 skip
+        log_push(ss, slot, source, 'pushing')
         print("\n→ 實際推播中...")
         status, resp = push_to_line(flex_msg, subscribers)
         print(f"LINE API 回應：{status} {resp}")
+        log_push(ss, slot, source, f'done {status}')
     else:
         print("\n(DRY RUN — 未實際推播；加 --push 才會推)")
 
