@@ -1,0 +1,4 @@
+{
+  "build_command": "docker",
+  "start_command": "./entrypoint.sh"
+}
