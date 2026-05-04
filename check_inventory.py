@@ -195,23 +195,48 @@ def build_alert_row(item, s, level):
     }
 
 
+def _table_header():
+    return {"type": "box", "layout": "horizontal",
+            "backgroundColor": "#f5f5f5", "paddingAll": "6px", "cornerRadius": "4px",
+            "contents": [
+                {"type": "text", "text": "品項", "size": "xs", "color": "#888888", "flex": 5},
+                {"type": "text", "text": "剩餘", "size": "xs", "color": "#888888", "flex": 3, "align": "end"},
+                {"type": "text", "text": "可用", "size": "xs", "color": "#888888", "flex": 2, "align": "end"},
+                {"type": "text", "text": "建議補", "size": "xs", "color": "#888888", "flex": 2, "align": "end"},
+            ]}
+
+
 def build_section(title, color, items_list):
-    """整段：標題 + 表頭 + 多列"""
+    """整段：標題 + 同類別群組（餡料/皮料/...）+ 表頭 + 多列"""
     contents = [
         {"type": "text", "text": f"{title}（{len(items_list)} 項）",
          "weight": "bold", "size": "md", "color": color},
-        {"type": "box", "layout": "horizontal",
-         "backgroundColor": "#f5f5f5", "paddingAll": "6px", "cornerRadius": "4px",
-         "contents": [
-             {"type": "text", "text": "品項", "size": "xs", "color": "#888888", "flex": 5},
-             {"type": "text", "text": "剩餘", "size": "xs", "color": "#888888", "flex": 3, "align": "end"},
-             {"type": "text", "text": "可用", "size": "xs", "color": "#888888", "flex": 2, "align": "end"},
-             {"type": "text", "text": "建議補", "size": "xs", "color": "#888888", "flex": 2, "align": "end"},
-         ]},
     ]
     level = 'red' if '警示' in title else 'yellow'
+
+    # 按類別分群（保留原 TARGET_DAYS 順序）
+    by_cat = {}
+    cat_order = []
     for item, s in items_list:
-        contents.append(build_alert_row(item, s, level))
+        cat = item.get('cat') or '未分類'
+        if cat not in by_cat:
+            by_cat[cat] = []
+            cat_order.append(cat)
+        by_cat[cat].append((item, s))
+
+    # 單類別 → 不顯示子標題（避免冗餘）；多類別 → 每類加小標
+    show_cat_header = len(by_cat) > 1
+    for cat in cat_order:
+        group = by_cat[cat]
+        if show_cat_header:
+            contents.append({
+                "type": "text", "text": f"  {cat}（{len(group)}）",
+                "size": "xs", "color": "#666666", "weight": "bold", "margin": "md",
+            })
+        contents.append(_table_header())
+        for item, s in group:
+            contents.append(build_alert_row(item, s, level))
+
     return {"type": "box", "layout": "vertical", "spacing": "xs", "contents": contents}
 
 
