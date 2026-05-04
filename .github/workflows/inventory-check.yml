@@ -1,12 +1,9 @@
 name: Inventory Alert
 
 on:
-  schedule:
-    # 09:05 TST = 01:05 UTC（避開整點尖峰，減少 GitHub Actions 排程延遲）
-    - cron: '5 1 * * *'
-    # 18:05 TST = 10:05 UTC
-    - cron: '5 10 * * *'
-  workflow_dispatch:  # 允許手動觸發測試
+  # 主管道改回本機 launchd（GitHub Actions 排程延遲嚴重，2026-05-05 改）
+  # 這裡只留手動觸發，當本機電腦關機或 launchd 失效時，從 web UI 手動 Run workflow
+  workflow_dispatch:
 
 jobs:
   check:
