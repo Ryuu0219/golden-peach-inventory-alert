@@ -1,13 +1,12 @@
 name: Inventory Alert
 
 on:
-  # 雙保險設計（2026-05-05）：
-  # - 本機 launchd 主管道（準時 09:00 / 18:00）
-  # - GH Actions 自動備援：09:30 / 18:30 跑（讓 launchd 先跑），若 Sheet 已有當班 log 就 skip
+  # 2026-05-24 縮減為每日一次（省 LINE 配額，原本 2 次/天爆 11000/月）
+  # - 本機 launchd 主管道：09:00
+  # - GH Actions 自動備援：09:30（讓 launchd 先跑、Sheet 有 log 就 skip）
   # - 電腦關機那天 launchd 沒跑 → GH Actions 看不到 log → 自動補推
   schedule:
     - cron: '30 1 * * *'   # 09:30 TST = 01:30 UTC
-    - cron: '30 10 * * *'  # 18:30 TST = 10:30 UTC
   workflow_dispatch:
 
 jobs:
