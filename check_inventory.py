@@ -1,5 +1,5 @@
 """金桃家庫存水位推播檢查"""
-import os, sys, json
+import os, sys, json, time
 from datetime import datetime, timedelta, timezone
 import gspread
 import requests
@@ -345,22 +345,45 @@ def log_push(ss, slot, source, status):
     ])
 
 
+def with_retry(fn, *, label, tries=5, delay=60):
+    """清晨 Google API 偶發錯誤（DNS/503/連線重置）時自動重試。
+    只能包『沒有副作用的讀取』——發送 LINE 那段絕不能進來，否則重試會造成重複推播。"""
+    last = None
+    for attempt in range(1, tries + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last = e
+            print(f"⚠️  {label} 第 {attempt}/{tries} 次失敗：{type(e).__name__}: {e}")
+            if attempt < tries:
+                time.sleep(delay)
+    raise RuntimeError(f"{label} 重試 {tries} 次仍失敗") from last
+
+
 def main(dry_run=True):
-    g = gc()
-    ss = g.open_by_key(SHEET_ID)
     source = os.environ.get('PUSH_SOURCE', 'launchd' if not dry_run else 'manual')
     slot = current_slot()
 
-    if not dry_run and already_pushed(ss, slot):
+    def read_phase():
+        """連線 + 全部讀取（gspread 認證 / 開 Sheet / 解析庫存 / 抓訂閱者）。
+        全是 idempotent 讀取，可安全重試。"""
+        g = gc()
+        ss = g.open_by_key(SHEET_ID)
+        if not dry_run and already_pushed(ss, slot):
+            return True, None, None  # 已推過 → 跳過
+        items = parse_inventory(ss)
+        targets = [i for i in items if '🔴' in i['status'] or '🟡' in i['status']]
+        iws = [(i, compute_suggestion(i, ss)) for i in targets]
+        subs = get_inventory_subscribers(g)
+        return False, iws, subs, ss
+
+    result = with_retry(read_phase, label='讀取庫存資料')
+    if result[0]:  # already pushed
         print(f"[skip] 今天 {slot} 已由其他來源推過，跳過避免重複")
         return
+    _, items_with_suggestions, subscribers, ss = result
 
-    items = parse_inventory(ss)
-    targets = [i for i in items if '🔴' in i['status'] or '🟡' in i['status']]
-    items_with_suggestions = [(i, compute_suggestion(i, ss)) for i in targets]
     flex_msg = format_flex(items_with_suggestions, datetime.now())
-
-    subscribers = get_inventory_subscribers(g)
 
     red_n = sum(1 for x in items_with_suggestions if '🔴' in x[0]['status'] or x[0]['stock'] == 0)
     yellow_n = len(items_with_suggestions) - red_n
